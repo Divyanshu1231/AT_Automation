@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: airtable-bulk-form-filler
+    runtime: docker
+    plan: starter          # Chromium needs more than the 512 MB free tier
+    healthCheckPath: /healthz
+    envVars:
+      - key: HEADLESS
+        value: "1"
+      - key: APP_PASSWORD  # set this in the Render dashboard; protects the site
+        sync: false
