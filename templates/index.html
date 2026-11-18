@@ -1,25 +1,42 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Airtable Bulk Form Filler</title><link rel="stylesheet" href="/static/style.css"></head><body><main>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Airtable Bulk Form Filler</title><link rel="stylesheet" href="/static/style.css"><style>
+.ms{position:relative;margin:14px 0}.ms-title{display:block;font-weight:700;margin-bottom:6px}.ms-title i{font-weight:400;color:#667;font-style:normal;font-size:.85em}
+.ms-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;padding:6px 12px;border:1px solid #ccd;border-radius:10px;background:#fff;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.ms.open .ms-btn{border-color:#4a6cf7;box-shadow:0 0 0 3px rgba(74,108,247,.15)}
+.ms-val{display:flex;flex-wrap:wrap;gap:6px;flex:1}.ms-ph{color:#889;font-weight:400}.ms-arrow{color:#667}
+.ms-chip{background:#e3e9ff;color:#1c2b6b;border-radius:999px;padding:2px 10px;font-size:.85em;font-weight:600}.ms-chip b{cursor:pointer;margin-left:4px}
+.ms-panel{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #ccd;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.15);padding:8px}
+.ms-panel[hidden]{display:none}.ms .ms-find{width:100%;margin:0 0 6px;box-sizing:border-box}
+.ms-list{max-height:240px;overflow:auto}
+.ms .opt{display:flex;align-items:center;gap:8px;margin:0;padding:6px 8px;border-radius:6px;font-weight:400;cursor:pointer;line-height:1.25}
+.ms .opt:hover{background:#f0f3ff}.ms .opt input{width:auto;margin:0;flex:none}
+</style></head><body><main>
 <header><div class="logo">AF</div><div><h1>Airtable Bulk Form Filler</h1><p>Upload CSV and fill your password-protected Airtable form.</p></div></header>
 <form id="form">
 <label>Airtable Form Link<input name="form_url" type="url" required placeholder="https://airtable.com/.../form"></label>
 <label>Form Password<input name="form_password" type="password" required autocomplete="off" placeholder="Password for this form"></label>
 <div class="grid"><label>Recruiter name (as in dropdown)<input name="recruiter_name" placeholder="Recruiter name"></label></div>
-<div class="qual"><b>Job title and Specialisation (tick what to select in the form; none ticked = use CSV column)</b>
-<input id="jobFind" type="search" placeholder="Search job title…" autocomplete="off">
-<div id="jobBox" class="pickbox"></div><small id="jobCount">None selected</small></div>
-<div class="qual"><b>Qualification (tick what to select in the form; none ticked = use CSV column)</b>
-<input id="qualFind" type="search" placeholder="Search qualification…" autocomplete="off">
-<div id="qualBox" class="pickbox"></div><small id="qualCount">None selected</small></div>
+<div class="ms" id="jobMs"><span class="ms-title">Job title and Specialisation <i>(none selected = use CSV column)</i></span>
+<button type="button" class="ms-btn"><span class="ms-val"></span><span class="ms-arrow">▾</span></button>
+<div class="ms-panel" hidden><input type="search" class="ms-find" placeholder="Search…" autocomplete="off"><div class="ms-list"></div></div></div>
+<div class="ms" id="qualMs"><span class="ms-title">Qualification <i>(none selected = use CSV column)</i></span>
+<button type="button" class="ms-btn"><span class="ms-val"></span><span class="ms-arrow">▾</span></button>
+<div class="ms-panel" hidden><input type="search" class="ms-find" placeholder="Search…" autocomplete="off"><div class="ms-list"></div></div></div>
 <label>Candidate CSV<input name="csv_file" type="file" accept=".csv" required></label>
 <label>CV files (optional - select all; CSV Original CV / Edited CV column = file name)<input name="cv_files" type="file" multiple></label>
 <p class="hint">CSV columns: Name, Email ID, Mobile No, Qualification, Job title and Specialisation, Notice Period, Preferred Location, Preferred Location State, Vacancy Reference Code, Original CV, Edited CV (CV = full local file path). Multiple dropdown values: separate with comma or ;</p>
 <label class="check"><input id="submitRecords" type="checkbox" checked> Automatically submit each completed form (untick = only fill and keep tabs open for manual review)</label>
 <button id="start">Start filling forms</button></form>
 <section id="progress" class="hidden"><h2>Progress <small id="state">Queued</small></h2><div class="bar"><div id="bar"></div></div><p id="count"></p><pre id="logs"></pre></section>
-<footer>Password is entered for this run only. App runs locally; do not expose it to the internet.</footer></main><script src="/static/app.js"></script><script>function pickList(box,find,count,url,name){box=document.getElementById(box);find=document.getElementById(find);count=document.getElementById(count);
-fetch(url).then(r=>r.json()).then(o=>{o.forEach(v=>{const l=document.createElement("label");l.className="qopt";const i=document.createElement("input");i.type="checkbox";i.name=name;i.value=v;l.append(i,document.createTextNode(" "+v));box.append(l)});
-const upd=()=>{const c=[...box.querySelectorAll("input:checked")];count.textContent=c.length?c.length+" selected: "+c.map(x=>x.value).join(" | "):"None selected"};
-box.addEventListener("change",upd);
-find.addEventListener("input",e=>{const q=e.target.value.toLowerCase();box.querySelectorAll(".qopt").forEach(l=>l.style.display=l.textContent.toLowerCase().includes(q)?"":"none")})})}
-pickList("qualBox","qualFind","qualCount","/static/qualification_options.json","qualification");
-pickList("jobBox","jobFind","jobCount","/static/job_options.json","job_titles");</script></body></html>
+<footer>Password is entered for this run only. App runs locally; do not expose it to the internet.</footer></main><script src="/static/app.js"></script><script>function multiSelect(id,url,name){const root=document.getElementById(id),btn=root.querySelector(".ms-btn"),val=root.querySelector(".ms-val"),panel=root.querySelector(".ms-panel"),find=root.querySelector(".ms-find"),list=root.querySelector(".ms-list");
+const checked=()=>[...list.querySelectorAll("input:checked")];
+function draw(){const c=checked();val.innerHTML="";if(!c.length){val.innerHTML='<span class="ms-ph">Select… (none = use CSV)</span>';return}
+c.forEach(x=>{const s=document.createElement("span");s.className="ms-chip";s.textContent=x.value+" ";const r=document.createElement("b");r.textContent="×";r.title="Remove";r.onclick=e=>{e.stopPropagation();x.checked=false;draw()};s.append(r);val.append(s)})}
+const close=()=>{panel.hidden=true;root.classList.remove("open")};
+btn.onclick=()=>{const open=panel.hidden;document.querySelectorAll(".ms-panel").forEach(p=>{p.hidden=true;p.parentNode.classList.remove("open")});if(open){panel.hidden=false;root.classList.add("open");find.value="";find.dispatchEvent(new Event("input"));find.focus()}};
+document.addEventListener("click",e=>{if(!root.contains(e.target))close()});
+root.addEventListener("keydown",e=>{if(e.key==="Escape")close()});
+list.addEventListener("change",draw);
+find.addEventListener("input",()=>{const q=find.value.toLowerCase();list.querySelectorAll(".opt").forEach(l=>l.style.display=l.textContent.toLowerCase().includes(q)?"":"none")});
+fetch(url).then(r=>r.json()).then(o=>{o.forEach(v=>{const l=document.createElement("label");l.className="opt";const i=document.createElement("input");i.type="checkbox";i.name=name;i.value=v;l.append(i,document.createTextNode(" "+v));list.append(l)});draw()})}
+multiSelect("qualMs","/static/qualification_options.json","qualification");
+multiSelect("jobMs","/static/job_options.json","job_titles");</script></body></html>
