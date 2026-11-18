@@ -108,28 +108,36 @@ def match_rule(label):
 
 
 # ---------------------------------------------------------------- password
-async def unlock(page, pw):
+async def form_visible(page):
+    try:
+        return await page.locator(CONTAINER).first.is_visible()
+    except Exception:
+        return False
+
+
+async def unlock(page, pw, timeout=45000):
     await dismiss_cookies(page)
+    try:                                                   # visible password box OR visible form, whichever comes first
+        await page.wait_for_selector(f'input[type="password"], {CONTAINER}', state="visible", timeout=timeout)
+    except Exception:
+        raise RuntimeError("Form questions did not load (slow network or wrong link)")
     p = page.locator('input[type="password"]')
-    if await p.count():
+    if await p.count() and await p.first.is_visible() and not await form_visible(page):
         await p.first.fill(pw)
         b = page.get_by_role("button", name=re.compile("enter|submit|continue", re.I))
         if await b.count():
             await b.first.click()
         else:
             await p.first.press("Enter")
-        await page.wait_for_timeout(1800)
-        if await page.locator('input[type="password"]').count():
+        for _ in range(int(timeout / 400)):                # wait until the form appears (no fixed sleep)
+            if await form_visible(page):
+                break
             body = (await page.locator("body").inner_text())[:1000]
             if re.search("incorrect password|wrong password", body, re.I):
                 raise RuntimeError("Airtable rejected the password")
-            await page.wait_for_timeout(2000)
-    if await page.locator('input[type="password"]').count():
-        raise RuntimeError("Password screen remains. Check password.")
-    try:
-        await page.wait_for_selector(CONTAINER, timeout=30000)
-    except Exception:
-        raise RuntimeError("Form questions did not load (page layout changed or wrong link)")
+            await page.wait_for_timeout(400)
+        else:
+            raise RuntimeError("Form questions did not load after entering the password")
     await dismiss_cookies(page)
 
 
@@ -203,14 +211,14 @@ async def click_submit(page, debug_dir=None):
         try:
             await fn()
             tried.append(name)
-        except Exception as e:
+            polls = 30 if len(tried) == 1 else 16        # 15 s after the 1st click (avoid double submit), 8 s later
+        except Exception:
             tried.append(f"{name}(err)")
-            continue
-        for _ in range(30 if not tried[:-1] else 16):     # wait 15 s after 1st click (avoid double submit), 8 s after later ones
+            polls = 8                                      # a click that raised may still have submitted (page changed)
+        for _ in range(polls):
             if await form_submitted(page):
                 return name
             await page.wait_for_timeout(500)
-        # not confirmed: look for a visible error message before the next attempt
     msg = ""
     try:
         msg = (await page.locator("body").inner_text())[-400:].replace("\n", " | ")
@@ -314,7 +322,11 @@ async def pick_option(page, container, value):
     idx, options = None, []
     for q in dict.fromkeys([value, value[:4]]):
         await search.first.fill(q)
-        await page.wait_for_timeout(400)
+        await page.wait_for_timeout(200)
+        for _ in range(12):                                     # wait until the filtered list is there
+            if await page.evaluate(OPTIONS_JS, SEARCH):
+                break
+            await page.wait_for_timeout(100)
         await page.evaluate(SCROLL_JS, True)                    # back to top of the list
         for _ in range(40):                                     # long lists are scrolled (virtualised)
             options = await page.evaluate(OPTIONS_JS, SEARCH)
@@ -334,10 +346,10 @@ async def pick_option(page, container, value):
         await page.keyboard.press("Escape")
         raise RuntimeError(f'option "{value}" not found in dropdown')
     await page.locator(f'[data-bf-i="{idx}"]').first.click()
-    await page.wait_for_timeout(350)
+    await page.wait_for_timeout(200)
     if await search.count() and await search.first.is_visible():
         await page.keyboard.press("Escape")
-        await page.wait_for_timeout(150)
+        await page.wait_for_timeout(80)
     return options[idx]
 
 
@@ -480,7 +492,7 @@ async def fill_form(page, row, ui):
                     await page.keyboard.press("Control+A")
                     await page.keyboard.type(value, delay=20)
                 await box.press("Tab")        # blur so Airtable re-validates required fields
-                await page.wait_for_timeout(150)
+                await page.wait_for_timeout(40)
             else:
                 continue
             filled.append(label)
