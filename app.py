@@ -54,52 +54,79 @@ def read_csv(path):
     raise ValueError("Could not decode CSV (save it as UTF-8)")
 
 
+CONCURRENCY = max(1, int(os.getenv("CONCURRENCY", "2")))     # candidates filled at the same time
+BLOCK_ASSETS = os.getenv("BLOCK_ASSETS", "1") == "1"          # skip images/fonts/media = faster page load
+
+
 async def run_job(jid, path, url, password, special, recname, submit, cv_dir=None, qual=""):
     job = JOBS[jid]
     job["status"] = "running"
     pw = await async_playwright().start()
     browser = await pw.chromium.launch(headless=HEADLESS, args=["--no-sandbox", "--disable-dev-shm-usage"])
     context = await browser.new_context(viewport={"width": 1280, "height": 900})
+    if BLOCK_ASSETS:
+        async def _block(route):
+            if route.request.resource_type in ("image", "media", "font"):
+                await route.abort()
+            else:
+                await route.continue_()
+        await context.route("**/*", _block)
     try:
         df = read_csv(path)
-        job["logs"].append("Mode: AUTO-SUBMIT ON" if submit else "Mode: AUTO-SUBMIT OFF -> only fills, tabs stay open (tick the checkbox to submit)")
+        n = CONCURRENCY if submit else 1                      # review mode keeps tabs open -> one by one
+        job["logs"].append(("Mode: AUTO-SUBMIT ON" if submit else "Mode: AUTO-SUBMIT OFF -> only fills, tabs stay open")
+                           + f" | {n} candidate(s) at a time")
         ui = {"job": special, "recruiter": recname, "qualification": qual, "cv_dir": str(cv_dir) if cv_dir else ""}
-        for i, row in df.iterrows():
-            name = val(row, ["Name of Candidates", "Candidate Name", "Doctor Name", "Full Name", "Name"], r"recruiter") or f"Row {i + 1}"
-            page = await context.new_page()          # one tab per candidate
-            keep_tab = not submit
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                await unlock(page, password)
-                filled, warns = await fill_form(page, row, ui)
-                missing = await missing_required(page)
-                note = f"{len(filled)} fields filled"
-                if warns:
-                    note += " | ⚠ " + "; ".join(warns)
-                if missing:
-                    note += " | required still empty: " + ", ".join(missing)
+        sem = asyncio.Semaphore(n)
 
-                if submit:
+        async def process(i, row):
+            name = val(row, ["Name of Candidates", "Candidate Name", "Doctor Name", "Full Name", "Name"], r"recruiter") or f"Row {i + 1}"
+            async with sem:
+                page = await context.new_page()              # one tab per candidate
+                keep_tab = not submit
+                t0 = asyncio.get_event_loop().time()
+                try:
+                    for attempt in range(3):                 # slow first load on a server -> retry
+                        try:
+                            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                            await unlock(page, password)
+                            break
+                        except Exception as e:
+                            if attempt == 2 or "rejected the password" in str(e):
+                                raise
+                            await page.wait_for_timeout(1500)
+                    filled, warns = await fill_form(page, row, ui)
+                    missing = await missing_required(page)
+                    note = f"{len(filled)} fields filled"
+                    if warns:
+                        note += " | ⚠ " + "; ".join(warns)
                     if missing:
-                        keep_tab = True
-                        raise RuntimeError(note)
-                    try:
-                        how = await click_submit(page, str(BASE / 'debug'))
-                    except Exception as e:
-                        keep_tab = True
-                        raise RuntimeError(f"{e} | " + note)
-                    job["logs"].append(f"✓ {name}: submitted (via {how}) | {note}")
+                        note += " | required still empty: " + ", ".join(missing)
+                    if submit:
+                        if missing:
+                            keep_tab = True
+                            raise RuntimeError(note)
+                        try:
+                            how = await click_submit(page, str(BASE / 'debug'))
+                        except Exception as e:
+                            keep_tab = True
+                            raise RuntimeError(f"{e} | " + note)
+                        job["logs"].append(f"✓ {name}: submitted (via {how}, {asyncio.get_event_loop().time() - t0:.0f}s) | {note}")
+                    else:
+                        job["logs"].append(f"✓ {name}: ready for review (tab left open) | {note}")
                     job["success"] += 1
-                else:
-                    job["logs"].append(f"✓ {name}: ready for review (tab left open) | {note}")
-                    job["success"] += 1
-            except Exception as e:
-                job["failed"] += 1
-                job["logs"].append(f"✗ {name}: {str(e)[:300]}")
-            finally:
-                if not keep_tab:
-                    await page.close()
-            job["done"] = i + 1
+                except Exception as e:
+                    job["failed"] += 1
+                    job["logs"].append(f"✗ {name}: {str(e)[:300]}")
+                finally:
+                    if not keep_tab:
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
+                    job["done"] += 1
+
+        await asyncio.gather(*(process(i, row) for i, row in df.iterrows()))
         job["status"] = "completed"
     except Exception as e:
         job["status"] = "error"
