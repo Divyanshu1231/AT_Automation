@@ -2,10 +2,12 @@ services:
   - type: web
     name: airtable-bulk-form-filler
     runtime: docker
-    plan: starter          # Chromium needs more than the 512 MB free tier
+    plan: standard         # 2 GB RAM / 1 CPU. Starter (512 MB) is too small for Chromium with parallel tabs
     healthCheckPath: /healthz
     envVars:
       - key: HEADLESS
         value: "1"
+      - key: CONCURRENCY   # candidates filled at the same time (2 is safe on Standard; use 1 on a 512 MB plan)
+        value: "2"
       - key: APP_PASSWORD  # set this in the Render dashboard; protects the site
         sync: false
